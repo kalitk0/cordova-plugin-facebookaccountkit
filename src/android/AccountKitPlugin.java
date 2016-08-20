@@ -5,32 +5,15 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.util.Log;
 
-import com.facebook.AccessToken;
-import com.facebook.CallbackManager;
-import com.facebook.FacebookCallback;
-import com.facebook.FacebookDialogException;
-import com.facebook.FacebookException;
-import com.facebook.FacebookOperationCanceledException;
-import com.facebook.FacebookRequestError;
-import com.facebook.FacebookSdk;
-import com.facebook.FacebookServiceException;
-import com.facebook.GraphRequest;
-import com.facebook.GraphResponse;
-import com.facebook.appevents.AppEventsLogger;
-import com.facebook.login.LoginManager;
-import com.facebook.login.LoginResult;
-import com.facebook.share.ShareApi;
-import com.facebook.share.Sharer;
-import com.facebook.share.model.GameRequestContent;
-import com.facebook.share.model.ShareLinkContent;
-import com.facebook.share.model.ShareOpenGraphObject;
-import com.facebook.share.model.ShareOpenGraphAction;
-import com.facebook.share.model.ShareOpenGraphContent;
-import com.facebook.share.model.AppInviteContent;
-import com.facebook.share.widget.GameRequestDialog;
-import com.facebook.share.widget.MessageDialog;
-import com.facebook.share.widget.ShareDialog;
-import com.facebook.share.widget.AppInviteDialog;
+import com.facebook.accountkit.AccessToken;
+import com.facebook.accountkit.AccountKit;
+import com.facebook.accountkit.AccountKitError;
+import com.facebook.accountkit.AccountKitLoginResult;
+import com.facebook.accountkit.ui.AccountKitActivity;
+import com.facebook.accountkit.ui.AccountKitConfiguration;
+import com.facebook.accountkit.ui.ButtonType;
+import com.facebook.accountkit.ui.LoginType;
+import com.facebook.accountkit.ui.TextPosition;
 
 import org.apache.cordova.CallbackContext;
 import org.apache.cordova.CordovaPlugin;
@@ -51,223 +34,118 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
 
-public class ConnectPlugin extends CordovaPlugin {
+public class AccountKitPlugin extends CordovaPlugin {
+	private static final int FRAMEWORK_REQUEST_CODE = 1;
 
-    private static final int INVALID_ERROR_CODE = -2; //-1 is FacebookRequestError.INVALID_ERROR_CODE
-    private static final String PUBLISH_PERMISSION_PREFIX = "publish";
-    private static final String MANAGE_PERMISSION_PREFIX = "manage";
-    @SuppressWarnings("serial")
-    private static final Set<String> OTHER_PUBLISH_PERMISSIONS = new HashSet<String>() {
-        {
-            add("ads_management");
-            add("create_event");
-            add("rsvp_event");
-        }
-    };
-    private final String TAG = "ConnectPlugin";
+   
+    private final String TAG = "AccountKitPlugin";
 
-    private CallbackManager callbackManager;
-    private AppEventsLogger logger;
-    private CallbackContext loginContext = null;
-    private CallbackContext showDialogContext = null;
-    private CallbackContext graphContext = null;
-    private String graphPath;
-    private ShareDialog shareDialog;
-    private GameRequestDialog gameRequestDialog;
-    private AppInviteDialog appInviteDialog;
-    private MessageDialog messageDialog;
 
     @Override
     protected void pluginInitialize() {
-        FacebookSdk.sdkInitialize(cordova.getActivity().getApplicationContext());
-
-        // create callbackManager
-        callbackManager = CallbackManager.Factory.create();
-
-        // create AppEventsLogger
-        logger = AppEventsLogger.newLogger(cordova.getActivity().getApplicationContext());
-
-        // Set up the activity result callback to this class
-        cordova.setActivityResultCallback(this);
-
-        LoginManager.getInstance().registerCallback(callbackManager, new FacebookCallback<LoginResult>() {
-            @Override
-            public void onSuccess(final LoginResult loginResult) {
-                GraphRequest.newMeRequest(loginResult.getAccessToken(), new GraphRequest.GraphJSONObjectCallback() {
-                    @Override
-                    public void onCompleted(JSONObject jsonObject, GraphResponse response) {
-                        if (response.getError() != null) {
-                            if (graphContext != null) {
-                                graphContext.error(getFacebookRequestErrorResponse(response.getError()));
-                            } else if (loginContext != null) {
-                                loginContext.error(getFacebookRequestErrorResponse(response.getError()));
-                            }
-                            return;
-                        }
-
-                        // If this login comes after doing a new permission request
-                        // make the outstanding graph call
-                        if (graphContext != null) {
-                            makeGraphCall();
-                            return;
-                        }
-
-                        Log.d(TAG, "returning login object " + jsonObject.toString());
-                        loginContext.success(getResponse());
-                        loginContext = null;
-                    }
-                }).executeAsync();
-            }
-
-            @Override
-            public void onCancel() {
-                FacebookOperationCanceledException e = new FacebookOperationCanceledException();
-                handleError(e, loginContext);
-            }
-
-            @Override
-            public void onError(FacebookException e) {
-                Log.e("Activity", String.format("Error: %s", e.toString()));
-                handleError(e, loginContext);
-            }
-        });
-
-        shareDialog = new ShareDialog(cordova.getActivity());
-        shareDialog.registerCallback(callbackManager, new FacebookCallback<Sharer.Result>() {
-            @Override
-            public void onSuccess(Sharer.Result result) {
-                if (showDialogContext != null) {
-                    showDialogContext.success(result.getPostId());
-                    showDialogContext = null;
-                }
-            }
-
-            @Override
-            public void onCancel() {
-                FacebookOperationCanceledException e = new FacebookOperationCanceledException();
-                handleError(e, showDialogContext);
-            }
-
-            @Override
-            public void onError(FacebookException e) {
-                Log.e("Activity", String.format("Error: %s", e.toString()));
-                handleError(e, showDialogContext);
-            }
-        });
-
-        messageDialog = new MessageDialog(cordova.getActivity());
-        messageDialog.registerCallback(callbackManager, new FacebookCallback<Sharer.Result>() {
-            @Override
-            public void onSuccess(Sharer.Result result) {
-                if (showDialogContext != null) {
-                    showDialogContext.success();
-                    showDialogContext = null;
-                }
-            }
-
-            @Override
-            public void onCancel() {
-                FacebookOperationCanceledException e = new FacebookOperationCanceledException();
-                handleError(e, showDialogContext);
-            }
-
-            @Override
-            public void onError(FacebookException e) {
-                Log.e("Activity", String.format("Error: %s", e.toString()));
-                handleError(e, showDialogContext);
-            }
-        });
-
-        gameRequestDialog = new GameRequestDialog(cordova.getActivity());
-        gameRequestDialog.registerCallback(callbackManager, new FacebookCallback<GameRequestDialog.Result>() {
-            @Override
-            public void onSuccess(GameRequestDialog.Result result) {
-                if (showDialogContext != null) {
-                    try {
-                        JSONObject json = new JSONObject();
-                        json.put("requestId", result.getRequestId());
-                        json.put("recipientsIds", new JSONArray(result.getRequestRecipients()));
-                        showDialogContext.success(json);
-                        showDialogContext = null;
-                    } catch (JSONException ex) {
-                        showDialogContext.success();
-                        showDialogContext = null;
-                    }
-                }
-            }
-
-            @Override
-            public void onCancel() {
-                FacebookOperationCanceledException e = new FacebookOperationCanceledException();
-                handleError(e, showDialogContext);
-            }
-
-            @Override
-            public void onError(FacebookException e) {
-                Log.e("Activity", String.format("Error: %s", e.toString()));
-                handleError(e, showDialogContext);
-            }
-        });
-
-        appInviteDialog = new AppInviteDialog(cordova.getActivity());
-        appInviteDialog.registerCallback(callbackManager, new FacebookCallback<AppInviteDialog.Result>() {
-            @Override
-            public void onSuccess(AppInviteDialog.Result result) {
-                if (showDialogContext != null) {
-                    try {
-                        JSONObject json = new JSONObject();
-                        Bundle bundle = result.getData();
-                        for (String key : bundle.keySet()) {
-                            json.put(key, wrapObject(bundle.get(key)));
-                        }
-
-                        showDialogContext.success(json);
-                        showDialogContext = null;
-                    } catch (JSONException e) {
-                        showDialogContext.success();
-                        showDialogContext = null;
-                    }
-                }
-            }
-
-            @Override
-            public void onCancel() {
-                FacebookOperationCanceledException e = new FacebookOperationCanceledException();
-                handleError(e, showDialogContext);
-            }
-
-            @Override
-            public void onError(FacebookException e) {
-                Log.e("Activity", String.format("Error: %s", e.toString()));
-                handleError(e, showDialogContext);
-            }
-        });
+    	AccountKit.initialize(cordova.getActivity().getApplicationContext());
+       
+       
     }
 
     @Override
     public void onResume(boolean multitasking) {
         super.onResume(multitasking);
         // Developers can observe how frequently users activate their app by logging an app activation event.
-        AppEventsLogger.activateApp(cordova.getActivity());
+      //  AppEventsLogger.activateApp(cordova.getActivity());
     }
 
     @Override
     public void onPause(boolean multitasking) {
         super.onPause(multitasking);
-        AppEventsLogger.deactivateApp(cordova.getActivity());
+
+    }
+    
+     public void onLoginPhone() {
+        onLogin(LoginType.PHONE);
+    }
+    
+    private void onLogin(final LoginType loginType) {
+        final Intent intent = new Intent(this, AccountKitActivity.class);
+        final AccountKitConfiguration.AccountKitConfigurationBuilder configurationBuilder
+                = new AccountKitConfiguration.AccountKitConfigurationBuilder(
+                loginType,
+                AccountKitActivity.ResponseType.TOKEN);
+        final AccountKitConfiguration configuration = configurationBuilder.build();
+        intent.putExtra(
+                AccountKitActivity.ACCOUNT_KIT_ACTIVITY_CONFIGURATION,
+                configuration);
+        OnCompleteListener completeListener = new OnCompleteListener() {
+            @Override
+            public void onComplete() {
+                startActivityForResult(intent, FRAMEWORK_REQUEST_CODE);
+            }
+        };
+        switch (loginType) {
+            case EMAIL:
+                final OnCompleteListener getAccountsCompleteListener = completeListener;
+                completeListener = new OnCompleteListener() {
+                    @Override
+                    public void onComplete() {
+                        
+                    }
+                };
+                break;
+            case PHONE:
+                if (configuration.isReceiveSMSEnabled()) {
+                    final OnCompleteListener receiveSMSCompleteListener = completeListener;
+                    completeListener = new OnCompleteListener() {
+                        @Override
+                        public void onComplete() {
+                            
+                        }
+                    };
+                }
+                if (configuration.isReadPhoneStateEnabled()) {
+                    final OnCompleteListener readPhoneStateCompleteListener = completeListener;
+                    completeListener = new OnCompleteListener() {
+                        @Override
+                        public void onComplete() {
+                           
+                        }
+                    };
+                }
+                break;
+        }
+        completeListener.onComplete();
     }
 
     @Override
     public void onActivityResult(int requestCode, int resultCode, Intent intent) {
         super.onActivityResult(requestCode, resultCode, intent);
         Log.d(TAG, "activity result in plugin: requestCode(" + requestCode + "), resultCode(" + resultCode + ")");
-        callbackManager.onActivityResult(requestCode, resultCode, intent);
+     	final String toastMessage;
+        final AccountKitLoginResult loginResult = AccountKit.loginResultWithIntent(data);
+        if (loginResult == null || loginResult.wasCancelled()) {
+            toastMessage = "Login Cancelled";
+            Log.d(TAG,toastMessage);
+        } else if (loginResult.getError() != null) {
+            toastMessage = loginResult.getError().getErrorType().getMessage();
+          Log.d(TAG,toastMessage);
+        } else {
+            final AccessToken accessToken = loginResult.getAccessToken();
+            final long tokenRefreshIntervalInSeconds =
+                    loginResult.getTokenRefreshIntervalInSeconds();
+            if (accessToken != null) {
+                toastMessage = "Success:" + accessToken.getAccountId()
+                        + tokenRefreshIntervalInSeconds;
+               Log.d(TAG,toastMessage);
+            } else {
+                toastMessage = "Unknown response type";
+                Log.d(TAG,toastMessage);
+            }
+        }
     }
 
     @Override
     public boolean execute(String action, JSONArray args, final CallbackContext callbackContext) throws JSONException {
         if (action.equals("login")) {
-            executeLogin(args, callbackContext);
+            onLoginPhone();
             return true;
 
         } else if (action.equals("logout")) {
