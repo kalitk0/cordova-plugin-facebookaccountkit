@@ -1,0 +1,27 @@
+{
+  "name": "cordova-plugin-facebookaccountkit",
+  "version": "1.7.1",
+  "description": "Cordova Facebook Account Kit Plugin",
+  "cordova": {
+    "id": "cordova-plugin-facebookaccountkit",
+    "platforms": [
+      "android"
+      
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kalitk0/accountkit"
+  },
+  "keywords": [
+    "cordova",
+    "facebook",
+    "ecosystem:cordova",
+    "cordova-android",
+    
+    "facebook-sdk",
+    "social",
+    "sharing"
+  ],
+  "license": "Apache-2.0"
+}
